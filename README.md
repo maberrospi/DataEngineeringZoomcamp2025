@@ -1,0 +1,1 @@
+### This repo is dedicated to the Data Engineering Zoomcamp by DataTalksClub and includes the notes and work I did following allong.
