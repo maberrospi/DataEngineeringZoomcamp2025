@@ -1,5 +1,5 @@
 
-These Notes are directly connected to the ![[DTalks-DataEng-Data Warehouse.pdf]]
+These Notes are directly connected to the [Data Warehouse PDF](<file:///C:\Users\mab03\Desktop\DataEngineeringZoomcamp2025\Slides\DTalks-DataEng-Data Warehouse.pdf>)
 
 **OLTP vs OLAP:**
 
