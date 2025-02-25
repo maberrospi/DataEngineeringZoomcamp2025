@@ -15,7 +15,7 @@ import time
 
 
 # Change this to your bucket name
-BUCKET_NAME = "zoomcamp2025_hw4_yellow"
+BUCKET_NAME = "zoomcamp2025_hw4_green_norm"
 
 # If you authenticated through the GCP SDK you can comment out these two lines
 # CREDENTIALS_FILE = "gcs.json"
@@ -44,6 +44,51 @@ fhv_schema = pa.schema([
         pa.field("SR_Flag",pa.int64()),
         pa.field("Affiliated_base_number",pa.string())
     ])
+
+
+yellow_schema = pa.schema([
+    ("VendorID", pa.string()),
+    ("tpep_pickup_datetime", pa.timestamp("s")),
+    ("tpep_dropoff_datetime", pa.timestamp("s")),
+    ("passenger_count", pa.int32()),
+    ("trip_distance", pa.decimal128(38, 9)),
+    ("RatecodeID", pa.string()),
+    ("store_and_fwd_flag", pa.string()),
+    ("PULocationID", pa.string()),
+    ("DOLocationID", pa.string()),
+    ("payment_type", pa.int32()),
+    ("fare_amount", pa.decimal128(38, 9)),
+    ("extra", pa.decimal128(38, 9)),
+    ("mta_tax", pa.decimal128(38, 9)),
+    ("tip_amount", pa.decimal128(38, 9)),
+    ("tolls_amount", pa.decimal128(38, 9)),
+    ("improvement_surcharge", pa.decimal128(38, 9)),
+    ("total_amount", pa.decimal128(38, 9)),
+    ("congestion_surcharge", pa.decimal128(38, 9)),
+])
+
+green_schema = pa.schema([
+    ("VendorID", pa.string()),
+    ("lpep_pickup_datetime", pa.timestamp("s")),
+    ("lpep_dropoff_datetime", pa.timestamp("s")),
+    ("store_and_fwd_flag", pa.string()),
+    ("RatecodeID", pa.string()),
+    ("PULocationID", pa.string()),
+    ("DOLocationID", pa.string()),
+    ("passenger_count", pa.int64()),
+    ("trip_distance", pa.decimal128(38, 9)),
+    ("fare_amount", pa.decimal128(38, 9)),
+    ("extra", pa.decimal128(38, 9)),
+    ("mta_tax", pa.decimal128(38, 9)),
+    ("tip_amount", pa.decimal128(38, 9)),
+    ("tolls_amount", pa.decimal128(38, 9)),
+    ("ehail_fee", pa.decimal128(38, 9)),
+    ("improvement_surcharge", pa.decimal128(38, 9)),
+    ("total_amount", pa.decimal128(38, 9)),
+    ("payment_type", pa.int32()),
+    ("trip_type", pa.string()),
+    ("congestion_surcharge", pa.decimal128(38, 9)),
+])
 
 
 def download_file_parquet(service,year,month):
@@ -98,7 +143,7 @@ def download_file(fmt,service,year,month):
         
 
 
-def normalize_datatypes(file_path):
+def normalize_datatypes(trgt_schea,file_path):
     # destination = os.path.join(DOWNLOAD_DIR, f"{Path(file_path).stem}_normalized.parquet")
     destination = Path(__file__).parent / f"{Path(file_path).stem}_normalized.parquet"
 
@@ -109,7 +154,7 @@ def normalize_datatypes(file_path):
     
     try:
         table = pq.read_table(file_path)
-        cast_table = table.cast(target_schema = fhv_schema)
+        cast_table = table.cast(target_schema = trgt_schea)
         pq.write_table(cast_table,destination)
         print(f"Saved normalized schema to: {destination}")
         return destination
@@ -191,9 +236,14 @@ def main(service,year,fmt) -> None:
         file_paths = list(executor.map(download_file, repeat(fmt),repeat(service),repeat(year),MONTHS))
             
     if service == 'fhv':
-        # Normalize the data
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            file_paths = list(executor.map(normalize_datatypes,file_paths))
+        target_schema = fhv_schema
+    elif service == 'yellow':
+        target_schema = yellow_schema
+    else:
+        target_schema = green_schema
+    # Normalize the data
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        file_paths = list(executor.map(normalize_datatypes,repeat(target_schema),file_paths))
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         executor.map(upload_to_gcs, filter(None, file_paths))  # Remove None values
