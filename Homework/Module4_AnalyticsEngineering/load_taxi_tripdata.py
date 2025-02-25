@@ -1,9 +1,13 @@
 import os
 import sys
 import urllib.request
+import requests
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import argparse
 from pathlib import Path
+from itertools import repeat
 from concurrent.futures import ThreadPoolExecutor
 from google.cloud import storage
 from google.api_core.exceptions import NotFound, Forbidden
@@ -11,14 +15,17 @@ import time
 
 
 # Change this to your bucket name
-BUCKET_NAME = "zoomcamp_hw4_2025_norm"
+BUCKET_NAME = "zoomcamp2025_hw4_yellow"
 
 # If you authenticated through the GCP SDK you can comment out these two lines
 # CREDENTIALS_FILE = "gcs.json"
 client = storage.Client(project="zoomcamp-mod4-analyticseng")
 
 
-BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data/fhv_tripdata_2019-"
+# BASE_URL_PARQUET = "https://d37ci6vzurychx.cloudfront.net/trip-data/fhv_tripdata_2019-"
+BASE_URL_PARQUET = "https://d37ci6vzurychx.cloudfront.net/trip-data/"
+BASE_URL_CSV = "https://github.com/DataTalksClub/nyc-tlc-data/releases/download/"
+# https://github.com/DataTalksClub/nyc-tlc-data/releases/download/fhv/fhv_tripdata_2019-01.csv.gz
 MONTHS = [f"{i:02d}" for i in range(1, 13)]
 DOWNLOAD_DIR = "."
 
@@ -38,9 +45,11 @@ fhv_schema = pa.schema([
         pa.field("Affiliated_base_number",pa.string())
     ])
 
-def download_file(month):
-    url = f"{BASE_URL}{month}.parquet"
-    file_path = os.path.join(DOWNLOAD_DIR, f"fhv_tripdata_2019-{month}.parquet")
+
+def download_file_parquet(service,year,month):
+    url = f"{BASE_URL_PARQUET}{service}_tripdata_{year}-{month}.parquet"
+    # file_path = os.path.join(DOWNLOAD_DIR, f"{service}_tripdata_{year}-{month}.parquet")
+    file_path = Path(__file__).parent / f"{service}_tripdata_{year}-{month}.parquet"
 
     if Path(file_path).exists():
         print(f"The file {file_path} exists and was skipped.")
@@ -54,10 +63,45 @@ def download_file(month):
     except Exception as e:
         print(f"Failed to download {url}: {e}")
         return None
+    
+def download_file_csv(service,year,month):
+    file_name = f"{service}_tripdata_{year}-{month}.csv.gz"
+    url = f"{BASE_URL_CSV}{service}/{file_name}"
+    # file_path = os.path.join(DOWNLOAD_DIR, f"{service}_tripdata_{year}-{month}.parquet")
+    file_path = Path(__file__).parent / f"{service}_tripdata_{year}-{month}.parquet"
+    
+    if Path(file_path).exists():
+        print(f"The file {file_path} exists and was skipped.")
+        return file_path
+
+    try:
+        print(f"Downloading {url}...")
+        urllib.request.urlretrieve(url, Path(__file__).parent / file_name)
+        print(f"Downloaded: {file_name}")
+        
+        # Read into parquet file using pandas
+        df = pd.read_csv(Path(__file__).parent / file_name, compression='gzip')
+        df.to_parquet(file_path, engine='pyarrow')
+        print(f"Saved Parquet: {file_path}")
+        return file_path
+    except Exception as e:
+        print(f"Failed to download {url}: {e}")
+        return None
+    
+def download_file(fmt,service,year,month):
+    if fmt == 'csv':
+        saved_file_path = download_file_csv(service,year,month)
+    else:
+        saved_file_path = download_file_parquet(service,year,month)
+        
+    return saved_file_path
+        
 
 
 def normalize_datatypes(file_path):
-    destination = os.path.join(DOWNLOAD_DIR, f"{Path(file_path).stem}_normalized.parquet")
+    # destination = os.path.join(DOWNLOAD_DIR, f"{Path(file_path).stem}_normalized.parquet")
+    destination = Path(__file__).parent / f"{Path(file_path).stem}_normalized.parquet"
+
     
     if Path(destination).exists():
         print(f"The file {destination} exists and was skipped.")
@@ -131,16 +175,33 @@ def upload_to_gcs(file_path, max_retries=3):
     print(f"Giving up on {file_path} after {max_retries} attempts.")
 
 
-if __name__ == "__main__":
+def get_args():
+    parser = argparse.ArgumentParser(description='Run injection script for TLC taxi trip data.')
+    parser.add_argument('--service', '-s', default='yellow', help='The service to injest - [yellow,green,fhv]')
+    parser.add_argument('--year', '-y', default='2019', help='The year to injest')
+    parser.add_argument('--fmt', '-f', default='parquet', help='The format to be downloaded - [parquet,csv]. If parquet the data will be downloaded from the NYC TLC website. Otherwise from the DataTalksClub repository.')
+    
+    return parser.parse_args()
+
+def main(service,year,fmt) -> None: 
     create_bucket(BUCKET_NAME)
 
+    # Change max workers if "Killed" because its caused from OOM.
     with ThreadPoolExecutor(max_workers=4) as executor:
-        file_paths = list(executor.map(download_file, MONTHS))
-        
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        norm_file_paths = list(executor.map(normalize_datatypes,file_paths))
+        file_paths = list(executor.map(download_file, repeat(fmt),repeat(service),repeat(year),MONTHS))
+            
+    if service == 'fhv':
+        # Normalize the data
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            file_paths = list(executor.map(normalize_datatypes,file_paths))
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        executor.map(upload_to_gcs, filter(None, norm_file_paths))  # Remove None values
+        executor.map(upload_to_gcs, filter(None, file_paths))  # Remove None values
 
     print("All files processed and verified.")
+
+if __name__ == "__main__":
+    
+    args = get_args()
+    
+    main(**vars(args))
